@@ -1,8 +1,14 @@
+import argparse
 import logging
+import sys
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
+
+if __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from models import User
 from schemas import ChatMessage, ChatRequest, ChatResponse
@@ -58,3 +64,24 @@ def chat(
     _: User = Depends(get_current_user),
 ) -> ChatResponse:
     return ChatResponse(reply=generate_chat_response(payload.messages))
+
+
+def run_cli_chat(prompt: str) -> str:
+    """Run a single user prompt through the chat model."""
+    messages = [ChatMessage(role="user", content=prompt)]
+    return generate_chat_response(messages)
+
+
+def run_cli() -> None:
+    parser = argparse.ArgumentParser(description="Run a chat prompt.")
+    parser.add_argument("prompt", type=str, help="The chat prompt to send.")
+    args = parser.parse_args()
+
+    try:
+        print(run_cli_chat(args.prompt))
+    except HTTPException as exc:
+        parser.exit(status=1, message=f"Unable to run chat: {exc.detail}\n")
+
+
+if __name__ == "__main__":
+    run_cli()

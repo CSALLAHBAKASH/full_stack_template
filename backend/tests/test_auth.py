@@ -1,11 +1,15 @@
+import sys
 from collections import defaultdict
 from collections.abc import Iterator
 
 import pytest
+from fastapi import HTTPException
+from langchain_core.messages import AIMessage, ToolMessage
 from fastapi.testclient import TestClient
 
 import auth
-import chatbot
+from agentic_ai import step_01_llm_chat as chatbot
+from agentic_ai import step_02_llm_with_tools as llm_with_tool
 import main
 import security
 from database import Base, engine
@@ -171,6 +175,23 @@ def test_chat_reports_missing_provider_key(
     assert "GROQ_API_KEY" in response.json()["detail"]
 
 
+def test_chat_cli_reports_provider_errors_without_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_chat(prompt: str) -> str:
+        raise HTTPException(status_code=503, detail="Set GROQ_API_KEY.")
+
+    monkeypatch.setattr(chatbot, "run_cli_chat", fail_chat)
+    monkeypatch.setattr(sys, "argv", ["step_01_llm_chat", "hello"])
+
+    with pytest.raises(SystemExit) as error:
+        chatbot.run_cli()
+
+    assert error.value.code == 1
+    assert "Unable to run chat: Set GROQ_API_KEY." in capsys.readouterr().err
+
+
 def test_chat_rejects_invalid_conversation(client: TestClient) -> None:
     sign_in_admin(client)
 
@@ -180,6 +201,129 @@ def test_chat_rejects_invalid_conversation(client: TestClient) -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_tool_chat_requires_authentication(client: TestClient) -> None:
+    response = client.post(
+        "/chat/tools",
+        json={"messages": [{"role": "user", "content": "What is 2 plus 2?"}]},
+    )
+
+    assert response.status_code == 401
+
+
+def test_authenticated_user_can_use_tool_chat(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sign_in_admin(client)
+    monkeypatch.setattr(
+        llm_with_tool,
+        "generate_tool_chat_response",
+        lambda messages: f"Calculated: {messages[-1].content}",
+    )
+
+    response = client.post(
+        "/chat/tools",
+        json={"messages": [{"role": "user", "content": "What is 2 plus 2?"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"reply": "Calculated: What is 2 plus 2?"}
+
+
+@pytest.mark.parametrize(
+    ("calculator", "arguments", "expected"),
+    [
+        (llm_with_tool.add_numbers, {"first": 8, "second": 3}, 11),
+        (llm_with_tool.subtract_numbers, {"first": 8, "second": 3}, 5),
+        (llm_with_tool.multiply_numbers, {"first": 8, "second": 3}, 24),
+        (llm_with_tool.divide_numbers, {"first": 8, "second": 2}, 4),
+    ],
+)
+def test_arithmetic_tools(
+    calculator,
+    arguments: dict[str, int],
+    expected: int,
+) -> None:
+    assert calculator.invoke(arguments) == expected
+
+
+def test_division_tool_rejects_division_by_zero() -> None:
+    with pytest.raises(ValueError, match="Cannot divide by zero"):
+        llm_with_tool.divide_numbers.invoke({"first": 1, "second": 0})
+
+
+def test_tool_chat_executes_model_tool_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(llm_with_tool.settings, "groq_api_key", "test-key")
+
+    class FakeModel:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.bound_tools = []
+            self.messages = []
+
+        def bind_tools(self, tools):
+            self.bound_tools = tools
+            return self
+
+        def invoke(self, messages):
+            self.calls += 1
+            self.messages = messages
+            if self.calls == 1:
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "add_numbers",
+                            "args": {"first": 2, "second": 2},
+                            "id": "call-add",
+                            "type": "tool_call",
+                        }
+                    ],
+                )
+            return AIMessage(content="2 + 2 = 4.")
+
+    fake_model = FakeModel()
+    monkeypatch.setattr(
+        llm_with_tool.ChatGroq,
+        "__new__",
+        lambda cls, **kwargs: fake_model,
+    )
+
+    reply = llm_with_tool.generate_tool_chat_response(
+        [chatbot.ChatMessage(role="user", content="What is 2 plus 2?")]
+    )
+
+    assert reply == "2 + 2 = 4."
+    assert {calculator.name for calculator in fake_model.bound_tools} == {
+        "add_numbers",
+        "subtract_numbers",
+        "multiply_numbers",
+        "divide_numbers",
+    }
+    tool_messages = [message for message in fake_model.messages if isinstance(message, ToolMessage)]
+    assert len(tool_messages) == 1
+    assert tool_messages[0].content == "4.0"
+
+
+def test_run_tool_chat_builds_a_user_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_messages = []
+
+    def fake_generate(messages):
+        captured_messages.extend(messages)
+        return "The result is 20."
+
+    monkeypatch.setattr(llm_with_tool, "generate_tool_chat_response", fake_generate)
+
+    assert llm_with_tool.run_tool_chat("What is 12 plus 8?") == "The result is 20."
+    assert len(captured_messages) == 1
+    assert captured_messages[0].role == "user"
+    assert captured_messages[0].content == "What is 12 plus 8?"
 
 
 def test_authenticated_request_refreshes_idle_session_expiry(

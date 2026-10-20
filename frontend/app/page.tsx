@@ -1,8 +1,17 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import {
+  FormEvent,
+  KeyboardEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
-import { Bot, LayoutDashboard } from "lucide-react";
+import { Bot, Calculator, LayoutDashboard, Plus, Send } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const SESSION_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const SESSION_HEARTBEAT_INTERVAL_MS = 30 * 1000;
@@ -21,7 +30,21 @@ type AuthConfig = {
   oidc_enabled: boolean;
 };
 
-type WorkspaceView = "dashboard" | "workspace";
+type WorkspaceView = "dashboard" | "workspace" | "tools";
+
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+};
+
+function MarkdownContent({ content }: { content: string }) {
+  return (
+    <div className="markdown-content">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+    </div>
+  );
+}
 
 class ApiError extends Error {
   constructor(
@@ -72,6 +95,23 @@ export default function Home() {
     password: "",
     role: "user" as "admin" | "user",
   });
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatSubmitting, setChatSubmitting] = useState(false);
+  const [chatError, setChatError] = useState("");
+  const chatMessagesRef = useRef<HTMLDivElement>(null);
+  const [toolMessages, setToolMessages] = useState<ChatMessage[]>([]);
+  const [toolInput, setToolInput] = useState("");
+  const [toolSubmitting, setToolSubmitting] = useState(false);
+  const [toolError, setToolError] = useState("");
+  const toolMessagesRef = useRef<HTMLDivElement>(null);
+
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      event.currentTarget.form?.requestSubmit();
+    }
+  }
 
   const loadUsers = useCallback(async () => {
     const result = await apiRequest<User[]>("/users");
@@ -87,6 +127,7 @@ export default function Home() {
         const currentUser = await apiRequest<User>("/auth/me");
         if (active) {
           setUser(currentUser);
+          setActiveView(currentUser.role === "admin" ? "dashboard" : "workspace");
           if (currentUser.role === "admin") {
             const existingUsers = await apiRequest<User[]>("/users");
             if (active) setUsers(existingUsers);
@@ -114,6 +155,22 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    const messageList = chatMessagesRef.current;
+    messageList?.scrollTo({
+      top: messageList.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [chatMessages, chatSubmitting]);
+
+  useEffect(() => {
+    const messageList = toolMessagesRef.current;
+    messageList?.scrollTo({
+      top: messageList.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [toolMessages, toolSubmitting]);
+
+  useEffect(() => {
     if (!user?.id) return;
 
     let isActive = true;
@@ -135,6 +192,8 @@ export default function Home() {
       } finally {
         setUser(null);
         setUsers([]);
+        setChatMessages([]);
+        setToolMessages([]);
         setError(message);
       }
     }
@@ -213,6 +272,7 @@ export default function Home() {
         body: JSON.stringify({ email, password }),
       });
       setUser(signedInUser);
+      setActiveView(signedInUser.role === "admin" ? "dashboard" : "workspace");
       setPassword("");
       if (signedInUser.role === "admin") await loadUsers();
     } catch (requestError) {
@@ -232,6 +292,8 @@ export default function Home() {
       await apiRequest<void>("/auth/logout", { method: "POST" });
       setUser(null);
       setUsers([]);
+      setChatMessages([]);
+      setToolMessages([]);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -296,6 +358,94 @@ export default function Home() {
           ? requestError.message
           : "Unable to load users.",
       );
+    }
+  }
+
+  async function handleChatSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const content = chatInput.trim();
+    if (!content || chatSubmitting) return;
+
+    const nextMessages = [
+      ...chatMessages,
+      { id: crypto.randomUUID(), role: "user" as const, content },
+    ];
+    setChatMessages(nextMessages);
+    setChatError("");
+    setChatSubmitting(true);
+    try {
+      const result = await apiRequest<{ reply: string }>("/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          messages: nextMessages
+            .slice(-20)
+            .map(({ role, content: messageContent }) => ({
+              role,
+              content: messageContent,
+            })),
+        }),
+      });
+      setChatMessages([
+        ...nextMessages,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: result.reply,
+        },
+      ]);
+      setChatInput("");
+    } catch (requestError) {
+      setChatError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to send your message.",
+      );
+    } finally {
+      setChatSubmitting(false);
+    }
+  }
+
+  async function handleToolChatSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const content = toolInput.trim();
+    if (!content || toolSubmitting) return;
+
+    const nextMessages = [
+      ...toolMessages,
+      { id: crypto.randomUUID(), role: "user" as const, content },
+    ];
+    setToolMessages(nextMessages);
+    setToolError("");
+    setToolSubmitting(true);
+    try {
+      const result = await apiRequest<{ reply: string }>("/chat/tools", {
+        method: "POST",
+        body: JSON.stringify({
+          messages: nextMessages
+            .slice(-20)
+            .map(({ role, content: messageContent }) => ({
+              role,
+              content: messageContent,
+            })),
+        }),
+      });
+      setToolMessages([
+        ...nextMessages,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: result.reply,
+        },
+      ]);
+      setToolInput("");
+    } catch (requestError) {
+      setToolError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to send your message.",
+      );
+    } finally {
+      setToolSubmitting(false);
     }
   }
 
@@ -385,29 +535,34 @@ export default function Home() {
           </span>
           <span>Agent Workspace</span>
         </Link>
-        {user.role === "admin" && (
-          <nav
-            className="workspace-nav"
-            aria-label="Workspace views"
+        <nav className="workspace-nav" aria-label="Workspace views">
+          <button
+            className={`nav-tab ${activeView === "workspace" ? "nav-tab-active" : ""}`}
+            aria-pressed={activeView === "workspace"}
+            onClick={() => setActiveView("workspace")}
           >
+            <Bot aria-hidden="true" size={16} strokeWidth={2} />
+            Chat
+          </button>
+          <button
+            className={`nav-tab ${activeView === "tools" ? "nav-tab-active" : ""}`}
+            aria-pressed={activeView === "tools"}
+            onClick={() => setActiveView("tools")}
+          >
+            <Calculator aria-hidden="true" size={16} strokeWidth={2} />
+            Tools chat
+          </button>
+          {user.role === "admin" && (
             <button
               className={`nav-tab ${activeView === "dashboard" ? "nav-tab-active" : ""}`}
               aria-pressed={activeView === "dashboard"}
               onClick={() => setActiveView("dashboard")}
             >
               <LayoutDashboard aria-hidden="true" size={16} strokeWidth={2} />
-              Admin dashboard
+              Admin
             </button>
-            <button
-              className={`nav-tab ${activeView === "workspace" ? "nav-tab-active" : ""}`}
-              aria-pressed={activeView === "workspace"}
-              onClick={() => setActiveView("workspace")}
-            >
-              <Bot aria-hidden="true" size={16} strokeWidth={2} />
-              Agent workspace
-            </button>
-          </nav>
-        )}
+          )}
+        </nav>
         <div className="account-menu">
           <div className="account-copy">
             <strong>{user.full_name || user.email}</strong>
@@ -425,17 +580,23 @@ export default function Home() {
             <p className="eyebrow">
               {activeView === "dashboard" && user.role === "admin"
                 ? "ACCESS MANAGEMENT"
-                : "YOUR AI WORKSPACE"}
+                : activeView === "tools"
+                  ? "TOOL-ENABLED ASSISTANT"
+                  : "YOUR AI WORKSPACE"}
             </p>
             <h1>
               {activeView === "dashboard" && user.role === "admin"
                 ? "Admin dashboard"
-                : "Agent workspace"}
+                : activeView === "tools"
+                  ? "Tools chat"
+                  : "Agent workspace"}
             </h1>
             <p className="muted">
               {activeView === "dashboard" && user.role === "admin"
                 ? `Manage users and access for ${user.email}.`
-                : `Welcome back, ${user.full_name || user.email}.`}
+                : activeView === "tools"
+                  ? "Ask the assistant to calculate with its built-in math tools."
+                  : `Welcome back, ${user.full_name || user.email}.`}
             </p>
           </div>
           <span className={`role-pill ${user.role === "admin" ? "role-admin" : ""}`}>
@@ -625,40 +786,252 @@ export default function Home() {
               </div>
             </section>
           </>
-        ) : (
-          <section className="agent-workspace" aria-label="Agent workspace">
-            <div className="agent-welcome">
-              <span className="agent-orb" aria-hidden="true">
-                ✳
-              </span>
-              <p className="eyebrow">AGENT PLAYGROUND</p>
-              <h2>Build something intelligent.</h2>
-              <p>
-                Your workspace is ready. Connect an agent runtime to start a
-                conversation and explore your agentic applications.
-              </p>
-            </div>
-            <div className="agent-connection">
-              <span className="connection-indicator" />
-              <div>
-                <strong>Agent runtime not connected</strong>
-                <span>
-                  Add your agent API endpoint to enable chat in this workspace.
+        ) : activeView === "tools" ? (
+          <section className="agent-workspace" aria-label="Tool-enabled chat">
+            <header className="chat-header">
+              <div className="chat-agent">
+                <span className="agent-orb" aria-hidden="true">
+                  <Calculator size={22} />
                 </span>
+                <div>
+                  <p className="eyebrow">TOOL-ENABLED ASSISTANT</p>
+                  <h2>Math tools</h2>
+                  <span>Add, subtract, multiply, or divide.</span>
+                </div>
               </div>
+              <button
+                className="button button-secondary new-chat-button"
+                type="button"
+                onClick={() => {
+                  setToolMessages([]);
+                  setToolError("");
+                  setToolInput("");
+                }}
+                disabled={toolSubmitting}
+              >
+                <Plus aria-hidden="true" size={16} />
+                New chat
+              </button>
+            </header>
+
+            <div
+              className="chat-messages"
+              ref={toolMessagesRef}
+              aria-label="Tool chat conversation"
+              aria-live="polite"
+            >
+              {toolMessages.length === 0 ? (
+                <div className="chat-empty-state">
+                  <span className="chat-empty-icon" aria-hidden="true">
+                    <Calculator size={22} />
+                  </span>
+                  <strong>Ask me to calculate something</strong>
+                  <p>
+                    I can add, subtract, multiply, and divide using calculator
+                    tools.
+                  </p>
+                  <div className="chat-suggestions" aria-label="Suggested calculations">
+                    {[
+                      "What is 125 plus 348?",
+                      "Multiply 24 by 19",
+                      "Divide 144 by 12",
+                    ].map((suggestion) => (
+                      <button
+                        className="chat-suggestion"
+                        key={suggestion}
+                        type="button"
+                        onClick={() => setToolInput(suggestion)}
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                toolMessages.map((message) => (
+                  <article
+                    className={`chat-message chat-message-${message.role}`}
+                    key={message.id}
+                  >
+                    <span className="chat-message-avatar" aria-hidden="true">
+                      {message.role === "assistant" ? (
+                        <Calculator size={16} />
+                      ) : (
+                        (user.full_name || user.email).slice(0, 1).toUpperCase()
+                      )}
+                    </span>
+                    <div className="chat-message-content">
+                      <span>{message.role === "assistant" ? "Assistant" : "You"}</span>
+                      <MarkdownContent content={message.content} />
+                    </div>
+                  </article>
+                ))
+              )}
+              {toolSubmitting && (
+                <div className="chat-message chat-message-assistant" role="status">
+                  <span className="chat-message-avatar" aria-hidden="true">
+                    <Calculator size={16} />
+                  </span>
+                  <div className="chat-message-content">
+                    <span>Assistant</span>
+                    <p className="chat-thinking">Choosing and running a tool…</p>
+                  </div>
+                </div>
+              )}
             </div>
-            <form className="agent-composer" onSubmit={(event) => event.preventDefault()}>
-              <label htmlFor="agent-prompt">Your message</label>
+
+            {toolError && (
+              <p className="alert alert-error chat-error" role="alert">
+                {toolError}
+              </p>
+            )}
+
+            <form className="agent-composer" onSubmit={handleToolChatSubmit}>
+              <label htmlFor="tool-chat-prompt">Your message</label>
               <textarea
-                id="agent-prompt"
-                placeholder="Connect an agent runtime to start sending messages…"
-                disabled
+                id="tool-chat-prompt"
+                value={toolInput}
+                onChange={(event) => setToolInput(event.target.value)}
+                placeholder="Try: What is 125 plus 348?"
+                maxLength={4000}
+                disabled={toolSubmitting}
+                onKeyDown={handleComposerKeyDown}
                 rows={3}
               />
               <div className="composer-footer">
-                <span>Agent integrations can be configured for each project.</span>
-                <button className="button button-primary" type="button" disabled>
-                  Send message
+                <span>
+                  Tools: add · subtract · multiply · divide · ⌘/Ctrl + Enter to
+                  send
+                </span>
+                <button
+                  className="button button-primary"
+                  type="submit"
+                  disabled={toolSubmitting || !toolInput.trim()}
+                >
+                  <Send aria-hidden="true" size={15} />
+                  {toolSubmitting ? "Working…" : "Send"}
+                </button>
+              </div>
+            </form>
+          </section>
+        ) : (
+          <section className="agent-workspace" aria-label="Agent chat">
+            <header className="chat-header">
+              <div className="chat-agent">
+                <span className="agent-orb" aria-hidden="true">
+                  <Bot size={24} />
+                </span>
+                <div>
+                  <p className="eyebrow">AGENT PLAYGROUND</p>
+                  <h2>Chat assistant</h2>
+                  <span>Ask a question or explore an idea.</span>
+                </div>
+              </div>
+              <button
+                className="button button-secondary new-chat-button"
+                type="button"
+                onClick={() => {
+                  setChatMessages([]);
+                  setChatError("");
+                  setChatInput("");
+                }}
+                disabled={chatSubmitting}
+              >
+                <Plus aria-hidden="true" size={16} />
+                New chat
+              </button>
+            </header>
+
+            <div
+              className="chat-messages"
+              ref={chatMessagesRef}
+              aria-label="Conversation"
+              aria-live="polite"
+            >
+              {chatMessages.length === 0 ? (
+                <div className="chat-empty-state">
+                  <span className="chat-empty-icon" aria-hidden="true">
+                    <Bot size={22} />
+                  </span>
+                  <strong>What can I help you with?</strong>
+                  <p>Your conversation will appear here.</p>
+                  <div className="chat-suggestions" aria-label="Suggested prompts">
+                    {[
+                      "Explain a concept in simple terms",
+                      "Help me draft an email",
+                      "Write a Python function",
+                    ].map((suggestion) => (
+                      <button
+                        className="chat-suggestion"
+                        key={suggestion}
+                        type="button"
+                        onClick={() => setChatInput(suggestion)}
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                chatMessages.map((message) => (
+                  <article
+                    className={`chat-message chat-message-${message.role}`}
+                    key={message.id}
+                  >
+                    <span className="chat-message-avatar" aria-hidden="true">
+                      {message.role === "assistant" ? (
+                        <Bot size={16} />
+                      ) : (
+                        (user.full_name || user.email).slice(0, 1).toUpperCase()
+                      )}
+                    </span>
+                    <div className="chat-message-content">
+                      <span>{message.role === "assistant" ? "Assistant" : "You"}</span>
+                      <MarkdownContent content={message.content} />
+                    </div>
+                  </article>
+                ))
+              )}
+              {chatSubmitting && (
+                <div className="chat-message chat-message-assistant" role="status">
+                  <span className="chat-message-avatar" aria-hidden="true">
+                    <Bot size={16} />
+                  </span>
+                  <div className="chat-message-content">
+                    <span>Assistant</span>
+                    <p className="chat-thinking">Thinking…</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {chatError && (
+              <p className="alert alert-error chat-error" role="alert">
+                {chatError}
+              </p>
+            )}
+
+            <form className="agent-composer" onSubmit={handleChatSubmit}>
+              <label htmlFor="agent-prompt">Your message</label>
+              <textarea
+                id="agent-prompt"
+                value={chatInput}
+                onChange={(event) => setChatInput(event.target.value)}
+                placeholder="Message the assistant…"
+                maxLength={4000}
+                disabled={chatSubmitting}
+                onKeyDown={handleComposerKeyDown}
+                rows={3}
+              />
+              <div className="composer-footer">
+                <span>⌘/Ctrl + Enter to send</span>
+                <button
+                  className="button button-primary"
+                  type="submit"
+                  disabled={chatSubmitting || !chatInput.trim()}
+                >
+                  <Send aria-hidden="true" size={15} />
+                  {chatSubmitting ? "Sending…" : "Send"}
                 </button>
               </div>
             </form>

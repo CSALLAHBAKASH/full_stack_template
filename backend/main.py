@@ -8,8 +8,9 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy import select
 
+from agentic_ai.step_01_llm_chat import router as chatbot_router
+from agentic_ai.step_02_llm_with_tools import router as tool_chat_router
 from auth import oidc_router, router
-from chatbot import router as chatbot_router
 from database import SessionLocal, engine
 from models import User
 from schemas import normalize_email
@@ -94,6 +95,7 @@ app.add_middleware(
 app.include_router(router)
 app.include_router(oidc_router, prefix="/auth/oidc", tags=["OIDC"])
 app.include_router(chatbot_router, tags=["Chat"])
+app.include_router(tool_chat_router, tags=["Tool chat"])
 
 
 @app.middleware("http")
