@@ -51,6 +51,12 @@ PostgreSQL, and Redis. PostgreSQL and Redis data are stored in named volumes.
 `docker compose down` preserves those volumes. `docker compose down -v` removes
 them and their data; do not use it unless you intend to delete the local data.
 
+Authentication sessions use a five-minute inactivity timeout by default.
+Authenticated requests refresh the server-side Redis expiry, and the frontend
+sends a keepalive only while the workspace is visible and has recent user
+activity. The inactivity duration can be changed with `SESSION_TTL_SECONDS` in
+`.env` for Compose or `sessionTtlSeconds` in Helm values.
+
 Useful checks:
 
 ```bash

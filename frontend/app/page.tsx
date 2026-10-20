@@ -4,6 +4,9 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Bot, LayoutDashboard } from "lucide-react";
 
+const SESSION_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+const SESSION_HEARTBEAT_INTERVAL_MS = 30 * 1000;
+
 type User = {
   id: string;
   email: string;
@@ -109,6 +112,96 @@ export default function Home() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    let isActive = true;
+    let lastActivity = Date.now();
+    let idleTimer: number;
+
+    async function expireSession(message: string) {
+      if (!isActive) return;
+      isActive = false;
+      window.clearTimeout(idleTimer);
+      try {
+        await apiRequest<void>("/auth/logout", { method: "POST" });
+      } catch (requestError) {
+        const detail =
+          requestError instanceof Error
+            ? ` ${requestError.message}`
+            : " The session cookie could not be cleared.";
+        message += detail;
+      } finally {
+        setUser(null);
+        setUsers([]);
+        setError(message);
+      }
+    }
+
+    function scheduleIdleExpiration() {
+      window.clearTimeout(idleTimer);
+      idleTimer = window.setTimeout(() => {
+        void expireSession(
+          "Your session expired after 5 minutes of inactivity. Please sign in again.",
+        );
+      }, SESSION_IDLE_TIMEOUT_MS);
+    }
+
+    function trackActivity() {
+      lastActivity = Date.now();
+      scheduleIdleExpiration();
+    }
+
+    async function refreshSession() {
+      try {
+        const currentUser = await apiRequest<User>("/auth/me");
+        if (isActive) setUser(currentUser);
+      } catch (requestError) {
+        if (requestError instanceof ApiError && requestError.status === 401) {
+          void expireSession("Your session expired. Please sign in again.");
+        } else if (isActive) {
+          setError(
+            requestError instanceof Error
+              ? `Unable to refresh your session. ${requestError.message}`
+              : "Unable to refresh your session. Check your connection.",
+          );
+        }
+      }
+    }
+
+    const activityEvents = [
+      "pointerdown",
+      "pointermove",
+      "keydown",
+      "scroll",
+      "touchstart",
+    ] as const;
+    activityEvents.forEach((eventName) =>
+      window.addEventListener(eventName, trackActivity, { passive: true }),
+    );
+    scheduleIdleExpiration();
+    const heartbeatTimer = window.setInterval(() => {
+      if (!isActive) return;
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastActivity >= SESSION_IDLE_TIMEOUT_MS) {
+        void expireSession(
+          "Your session expired after 5 minutes of inactivity. Please sign in again.",
+        );
+        return;
+      }
+      void refreshSession();
+    }, SESSION_HEARTBEAT_INTERVAL_MS);
+
+    return () => {
+      isActive = false;
+      window.clearTimeout(idleTimer);
+      window.clearInterval(heartbeatTimer);
+      activityEvents.forEach((eventName) =>
+        window.removeEventListener(eventName, trackActivity),
+      );
+    };
+  }, [user?.id]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

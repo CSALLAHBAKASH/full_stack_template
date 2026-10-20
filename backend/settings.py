@@ -21,7 +21,7 @@ class Settings:
     )
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     session_secret = os.getenv("SESSION_SECRET", "")
-    session_ttl_seconds = int(os.getenv("SESSION_TTL_SECONDS", "28800"))
+    session_ttl_seconds = int(os.getenv("SESSION_TTL_SECONDS", "300"))
     session_cookie_name = os.getenv("SESSION_COOKIE_NAME", "app_session")
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
     cors_origins = [

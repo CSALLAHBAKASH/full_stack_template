@@ -5,6 +5,7 @@ existingSecret: agent-workspace-secrets
 frontendUrl: https://workspace.example.com
 corsOrigins: https://workspace.example.com
 passwordAuthEnabled: "true"
+sessionTtlSeconds: 300
 
 oidc:
   issuerUrl: ""

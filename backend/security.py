@@ -4,7 +4,7 @@ import secrets
 from uuid import UUID
 
 import bcrypt
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, Response, status
 from redis import Redis
 from sqlalchemy.orm import Session
 
@@ -77,6 +77,7 @@ def enforce_login_rate_limit(email: str) -> None:
 
 def get_current_user(
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
 ) -> User:
     token = request.cookies.get(settings.session_cookie_name)
@@ -85,7 +86,10 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required.",
         )
-    user_id = redis_client.get(session_key(token))
+    user_id = redis_client.getex(
+        session_key(token),
+        ex=settings.session_ttl_seconds,
+    )
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -98,6 +102,7 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Account is unavailable.",
         )
+    set_session_cookie(response, token)
     return user
 
 

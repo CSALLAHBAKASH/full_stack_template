@@ -46,6 +46,8 @@ in `.env` and register `OIDC_REDIRECT_URI` with your identity provider. OIDC
 users with verified email addresses are linked to existing accounts by email
 or provisioned with the `user` role. Local passwords are stored as bcrypt
 hashes; browser sessions are opaque, HttpOnly cookies backed by Redis.
+Sessions expire after five minutes without user activity; authenticated API
+requests refresh the session while the workspace is being used.
 OIDC ID tokens are validated using the provider's RS256 signing keys.
 
 The first admin is created once from `BOOTSTRAP_ADMIN_EMAIL` and

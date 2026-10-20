@@ -72,6 +72,8 @@ curl http://localhost:8000/ready
 ```
 
 Open the app at <http://localhost:3000>.
+Sessions now expire after five minutes without activity. Normal authenticated
+use refreshes the session; an idle workspace returns to the sign-in screen.
 
 ## 5. Open the Compose app on an iPhone
 
