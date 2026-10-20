@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import auth
+import chatbot
 import main
 import security
 from database import Base, engine
@@ -123,6 +124,62 @@ def test_invalid_credentials_are_rejected(client: TestClient) -> None:
     )
 
     assert response.status_code == 401
+
+
+def test_chat_requires_authentication(client: TestClient) -> None:
+    response = client.post(
+        "/chat",
+        json={"messages": [{"role": "user", "content": "Hello"}]},
+    )
+
+    assert response.status_code == 401
+
+
+def test_authenticated_user_can_chat(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sign_in_admin(client)
+    monkeypatch.setattr(
+        chatbot,
+        "generate_chat_response",
+        lambda messages: f"Echo: {messages[-1].content}",
+    )
+
+    response = client.post(
+        "/chat",
+        json={"messages": [{"role": "user", "content": "Hello"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"reply": "Echo: Hello"}
+
+
+def test_chat_reports_missing_provider_key(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sign_in_admin(client)
+    monkeypatch.setattr(chatbot.settings, "groq_api_key", "")
+
+    response = client.post(
+        "/chat",
+        json={"messages": [{"role": "user", "content": "Hello"}]},
+    )
+
+    assert response.status_code == 503
+    assert "GROQ_API_KEY" in response.json()["detail"]
+
+
+def test_chat_rejects_invalid_conversation(client: TestClient) -> None:
+    sign_in_admin(client)
+
+    response = client.post(
+        "/chat",
+        json={"messages": [{"role": "assistant", "content": "Hello"}]},
+    )
+
+    assert response.status_code == 422
 
 
 def test_authenticated_request_refreshes_idle_session_expiry(

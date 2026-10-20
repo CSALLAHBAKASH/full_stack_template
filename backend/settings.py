@@ -1,4 +1,9 @@
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(dotenv_path=Path(__file__).resolve().with_name(".env"))
 
 
 def _get_bool(name: str, default: bool) -> bool:
@@ -39,6 +44,7 @@ class Settings:
     oidc_redirect_uri = os.getenv(
         "OIDC_REDIRECT_URI", "http://localhost:8000/auth/oidc/callback"
     )
+    groq_api_key = os.getenv("GROQ_API_KEY", "")
 
     @property
     def oidc_enabled(self) -> bool:

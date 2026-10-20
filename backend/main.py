@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy import select
 
 from auth import oidc_router, router
+from chatbot import router as chatbot_router
 from database import SessionLocal, engine
 from models import User
 from schemas import normalize_email
@@ -92,6 +93,7 @@ app.add_middleware(
 )
 app.include_router(router)
 app.include_router(oidc_router, prefix="/auth/oidc", tags=["OIDC"])
+app.include_router(chatbot_router, tags=["Chat"])
 
 
 @app.middleware("http")
