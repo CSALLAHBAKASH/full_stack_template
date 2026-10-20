@@ -1,0 +1,50 @@
+# ==============================================================================
+# 1. CORE AI, AGENTS, & ORCHESTRATION
+# ==============================================================================
+langchain
+langgraph
+langchain-openai
+langchain-groq
+langchain-text-splitters
+pydantic
+pydantic-settings
+
+# ==============================================================================
+# 2. BACKEND API, SERVER, & STREAMING
+# ==============================================================================
+fastapi
+uvicorn[standard]
+sse-starlette
+python-dotenv
+
+# ==============================================================================
+# 3. ENTERPRISE SECURITY, AUTHN, & AUTHZ
+# ==============================================================================
+python-jose[cryptography]     # Generates, signs, and decodes secure JWT tokens
+passlib[bcrypt]               # Secure password hashing (salting and verifying)
+bcrypt                        # Underlying engine required by passlib for hashing
+python-multipart              # Enables FastAPI to read OAuth2 password login form data
+slowapi                       # Rate limiting (stops brute-force auth and LLM scraping)
+
+# ==============================================================================
+# 4. PERSISTENCE, CACHE, & VECTOR DATABASE
+# ==============================================================================
+langchain-postgres
+psycopg[binary]               # Modern, asynchronous PostgreSQL driver (Psycopg 3)
+redis                         # Redis driver for response caching and rate-limiting
+sqlalchemy                    # ORM and database connection management
+faiss-cpu
+chroma
+
+# ==============================================================================
+# 5. DATABASE CONFIGURATION & MIGRATIONS
+# ==============================================================================
+alembic                       # Tracks schema versions and handles DB structural updates
+
+# ==============================================================================
+# 6. OBSERVABILITY, TESTING, & EVALUATION
+# ==============================================================================
+langsmith                     # Advanced tracing for agent nodes, steps, and tool calls
+pytest
+pytest-asyncio
+ragas

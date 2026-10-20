@@ -1,0 +1,36 @@
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+backend/.venv/
+__pycache__/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.pytest_cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.py[cod]
+
+# Node.js / Next.js
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/coverage/
+*.tsbuildinfo
+
+# Build output and logs
+build/
+dist/
+*.log
+npm-debug.log*
+
+# Local editor and operating system files
+.DS_Store
+.idea/

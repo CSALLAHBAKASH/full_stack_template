@@ -1,0 +1,41 @@
+nameOverride: ""
+fullnameOverride: ""
+
+existingSecret: agent-workspace-secrets
+frontendUrl: https://workspace.example.com
+corsOrigins: https://workspace.example.com
+passwordAuthEnabled: "true"
+
+oidc:
+  issuerUrl: ""
+  clientId: ""
+  redirectUri: ""
+
+imagePullSecrets: []
+
+backend:
+  replicaCount: 1
+  image:
+    repository: agent-workspace/backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 8000
+  resources: {}
+
+frontend:
+  replicaCount: 1
+  image:
+    repository: agent-workspace/frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 3000
+  resources: {}
+
+ingress:
+  enabled: false
+  className: ""
+  host: workspace.example.com
+  annotations: {}
+  tls: []
