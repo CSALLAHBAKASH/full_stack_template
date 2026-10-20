@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from agentic_ai.step_01_llm_chat import router as chatbot_router
 from agentic_ai.step_02_llm_with_tools import router as tool_chat_router
+from agentic_ai.step_03_langchain_agent import router as agent_chat_router
 from auth import oidc_router, router
 from database import SessionLocal, engine
 from models import User
@@ -96,6 +97,7 @@ app.include_router(router)
 app.include_router(oidc_router, prefix="/auth/oidc", tags=["OIDC"])
 app.include_router(chatbot_router, tags=["Chat"])
 app.include_router(tool_chat_router, tags=["Tool chat"])
+app.include_router(agent_chat_router, tags=["LangChain agent"])
 
 
 @app.middleware("http")

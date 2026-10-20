@@ -10,6 +10,9 @@ from fastapi.testclient import TestClient
 import auth
 from agentic_ai import step_01_llm_chat as chatbot
 from agentic_ai import step_02_llm_with_tools as llm_with_tool
+from agentic_ai import step_03_langchain_agent as langchain_agent
+from agentic_ai.tools import __main__ as tools_cli
+from agentic_ai.tools import standard as standard_tools
 import main
 import security
 from database import Base, engine
@@ -232,6 +235,60 @@ def test_authenticated_user_can_use_tool_chat(
     assert response.json() == {"reply": "Calculated: What is 2 plus 2?"}
 
 
+def test_langchain_agent_requires_authentication(client: TestClient) -> None:
+    response = client.post(
+        "/chat/agent",
+        json={"messages": [{"role": "user", "content": "What is 2 plus 2?"}]},
+    )
+
+    assert response.status_code == 401
+
+
+def test_authenticated_user_can_use_langchain_agent(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sign_in_admin(client)
+
+    class FakeAgent:
+        def invoke(self, state):
+            assert state["messages"][-1].content == "What is 2 plus 2?"
+            return {"messages": [AIMessage(content="2 + 2 = **4**.")]}
+
+    def fake_create_agent(**kwargs):
+        assert kwargs["tools"] == langchain_agent.AGENT_TOOLS
+        assert kwargs["tools"][: len(llm_with_tool.tools)] == llm_with_tool.tools
+        assert kwargs["system_prompt"] == langchain_agent.SYSTEM_PROMPT
+        return FakeAgent()
+
+    monkeypatch.setattr(langchain_agent.settings, "groq_api_key", "test-key")
+    monkeypatch.setattr(langchain_agent, "create_agent", fake_create_agent)
+
+    response = client.post(
+        "/chat/agent",
+        json={"messages": [{"role": "user", "content": "What is 2 plus 2?"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"reply": "2 + 2 = **4**."}
+
+
+def test_langchain_agent_requires_provider_key(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sign_in_admin(client)
+    monkeypatch.setattr(langchain_agent.settings, "groq_api_key", "")
+
+    response = client.post(
+        "/chat/agent",
+        json={"messages": [{"role": "user", "content": "Hello"}]},
+    )
+
+    assert response.status_code == 503
+    assert "GROQ_API_KEY" in response.json()["detail"]
+
+
 @pytest.mark.parametrize(
     ("calculator", "arguments", "expected"),
     [
@@ -247,6 +304,149 @@ def test_arithmetic_tools(
     expected: int,
 ) -> None:
     assert calculator.invoke(arguments) == expected
+
+
+def test_standard_tools_include_datetime_wikipedia_and_file_operations() -> None:
+    assert {tool.name for tool in standard_tools.standard_tools} == {
+        "get_current_datetime",
+        "search_wikipedia",
+        "create_text_file",
+        "read_text_file",
+        "append_to_text_file",
+        "replace_text_in_file",
+        "delete_text_file",
+    }
+    assert standard_tools.get_current_datetime.invoke({}).count("T") == 1
+
+
+def test_wikipedia_tool_returns_article_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return (
+                b'{"query":{"pages":{"1":{"title":"Python (programming language)",'
+                b'"extract":"Python is a programming language."}}}}'
+            )
+
+    monkeypatch.setattr(standard_tools, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+
+    result = standard_tools.search_wikipedia.invoke({"query": "Python"})
+
+    assert "Python is a programming language." in result
+    assert (
+        "https://en.wikipedia.org/wiki/Python_%28programming_language%29"
+        in result
+    )
+
+
+def test_workspace_file_tools_create_read_append_modify_and_delete(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(standard_tools, "AGENT_WORKSPACE", tmp_path)
+
+    assert standard_tools.create_text_file.invoke(
+        {"file_path": "notes.txt", "content": "hello"}
+    ) == "Created notes.txt."
+    assert standard_tools.read_text_file.invoke({"file_path": "notes.txt"}) == "hello"
+    standard_tools.append_to_text_file.invoke(
+        {"file_path": "notes.txt", "content": " world"}
+    )
+    standard_tools.replace_text_in_file.invoke(
+        {"file_path": "notes.txt", "old_text": "world", "new_text": "agent"}
+    )
+    assert standard_tools.read_text_file.invoke({"file_path": "notes.txt"}) == "hello agent"
+    assert standard_tools.delete_text_file.invoke({"file_path": "notes.txt"}) == "Deleted notes.txt."
+    assert not (tmp_path / "notes.txt").exists()
+
+
+@pytest.mark.parametrize("file_path", ["../outside.txt", "/tmp/outside.txt", "notes.md"])
+def test_workspace_file_tools_reject_paths_outside_text_workspace(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    file_path: str,
+) -> None:
+    monkeypatch.setattr(standard_tools, "AGENT_WORKSPACE", tmp_path)
+
+    with pytest.raises(ValueError):
+        standard_tools.read_text_file.invoke({"file_path": file_path})
+
+
+def test_tools_cli_runs_an_arithmetic_tool(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["agentic_ai.tools", "add_numbers", "12", "8"],
+    )
+
+    tools_cli.main()
+
+    assert capsys.readouterr().out == "20.0\n"
+
+
+def test_tools_cli_parses_keyword_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "agentic_ai.tools",
+            "add_numbers",
+            "12",
+            "--kwargs",
+            '{"second": 8}',
+        ],
+    )
+
+    tools_cli.main()
+
+    assert capsys.readouterr().out == "20.0\n"
+
+
+def test_tools_cli_rejects_non_object_keyword_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["agentic_ai.tools", "add_numbers", "12", "--kwargs", "[8]"],
+    )
+
+    with pytest.raises(SystemExit) as error:
+        tools_cli.main()
+
+    assert error.value.code == 2
+    assert "--kwargs must be a JSON object." in capsys.readouterr().err
+
+
+def test_tools_cli_reports_invalid_arithmetic(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["agentic_ai.tools", "divide_numbers", "12", "0"],
+    )
+
+    with pytest.raises(SystemExit) as error:
+        tools_cli.main()
+
+    assert error.value.code == 2
+    assert "Cannot divide by zero." in capsys.readouterr().err
 
 
 def test_division_tool_rejects_division_by_zero() -> None:

@@ -9,7 +9,14 @@ import {
   useState,
 } from "react";
 import Link from "next/link";
-import { Bot, Calculator, LayoutDashboard, Plus, Send } from "lucide-react";
+import {
+  Bot,
+  Calculator,
+  LayoutDashboard,
+  Plus,
+  Send,
+  Sparkles,
+} from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -30,7 +37,7 @@ type AuthConfig = {
   oidc_enabled: boolean;
 };
 
-type WorkspaceView = "dashboard" | "workspace" | "tools";
+type WorkspaceView = "dashboard" | "workspace" | "tools" | "agent";
 
 type ChatMessage = {
   id: string;
@@ -55,6 +62,45 @@ class ApiError extends Error {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getApiErrorMessage(body: unknown): string | undefined {
+  if (typeof body === "string") return body;
+  if (Array.isArray(body)) {
+    const messages = body
+      .map((item) => {
+        if (isRecord(item) && typeof item.msg === "string") {
+          const location: Array<string | number> = Array.isArray(item.loc)
+            ? item.loc.filter(
+                (part: unknown): part is string | number =>
+                  typeof part === "string" || typeof part === "number",
+              )
+            : [];
+          return `${location.length ? `${location.join(".")}: ` : ""}${item.msg}`;
+        }
+        return getApiErrorMessage(item);
+      })
+      .filter((message): message is string => Boolean(message));
+    return messages.length ? messages.join("; ") : undefined;
+  }
+  if (isRecord(body)) {
+    for (const key of ["detail", "message", "error"]) {
+      if (key in body) {
+        const message = getApiErrorMessage(body[key]);
+        if (message) return message;
+      }
+    }
+    try {
+      return JSON.stringify(body);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 async function apiRequest<T>(
   path: string,
   init: RequestInit = {},
@@ -69,11 +115,12 @@ async function apiRequest<T>(
   });
   if (response.status === 204) return undefined as T;
 
-  const body = (await response.json().catch(() => ({}))) as {
-    detail?: string;
-  };
+  const body: unknown = await response.json().catch(() => undefined);
   if (!response.ok) {
-    throw new ApiError(body.detail ?? "Request failed. Please try again.", response.status);
+    throw new ApiError(
+      getApiErrorMessage(body) ?? "Request failed. Please try again.",
+      response.status,
+    );
   }
   return body as T;
 }
@@ -105,6 +152,11 @@ export default function Home() {
   const [toolSubmitting, setToolSubmitting] = useState(false);
   const [toolError, setToolError] = useState("");
   const toolMessagesRef = useRef<HTMLDivElement>(null);
+  const [agentMessages, setAgentMessages] = useState<ChatMessage[]>([]);
+  const [agentInput, setAgentInput] = useState("");
+  const [agentSubmitting, setAgentSubmitting] = useState(false);
+  const [agentError, setAgentError] = useState("");
+  const agentMessagesRef = useRef<HTMLDivElement>(null);
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -171,6 +223,14 @@ export default function Home() {
   }, [toolMessages, toolSubmitting]);
 
   useEffect(() => {
+    const messageList = agentMessagesRef.current;
+    messageList?.scrollTo({
+      top: messageList.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [agentMessages, agentSubmitting]);
+
+  useEffect(() => {
     if (!user?.id) return;
 
     let isActive = true;
@@ -194,6 +254,7 @@ export default function Home() {
         setUsers([]);
         setChatMessages([]);
         setToolMessages([]);
+        setAgentMessages([]);
         setError(message);
       }
     }
@@ -294,6 +355,7 @@ export default function Home() {
       setUsers([]);
       setChatMessages([]);
       setToolMessages([]);
+      setAgentMessages([]);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -449,6 +511,50 @@ export default function Home() {
     }
   }
 
+  async function handleAgentChatSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const content = agentInput.trim();
+    if (!content || agentSubmitting) return;
+
+    const nextMessages = [
+      ...agentMessages,
+      { id: crypto.randomUUID(), role: "user" as const, content },
+    ];
+    setAgentMessages(nextMessages);
+    setAgentError("");
+    setAgentSubmitting(true);
+    try {
+      const result = await apiRequest<{ reply: string }>("/chat/agent", {
+        method: "POST",
+        body: JSON.stringify({
+          messages: nextMessages
+            .slice(-20)
+            .map(({ role, content: messageContent }) => ({
+              role,
+              content: messageContent,
+            })),
+        }),
+      });
+      setAgentMessages([
+        ...nextMessages,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: result.reply,
+        },
+      ]);
+      setAgentInput("");
+    } catch (requestError) {
+      setAgentError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Unable to send your message.",
+      );
+    } finally {
+      setAgentSubmitting(false);
+    }
+  }
+
   if (loading) {
     return (
       <main className="auth-shell">
@@ -552,6 +658,14 @@ export default function Home() {
             <Calculator aria-hidden="true" size={16} strokeWidth={2} />
             Tools chat
           </button>
+          <button
+            className={`nav-tab ${activeView === "agent" ? "nav-tab-active" : ""}`}
+            aria-pressed={activeView === "agent"}
+            onClick={() => setActiveView("agent")}
+          >
+            <Sparkles aria-hidden="true" size={16} strokeWidth={2} />
+            Agent
+          </button>
           {user.role === "admin" && (
             <button
               className={`nav-tab ${activeView === "dashboard" ? "nav-tab-active" : ""}`}
@@ -582,21 +696,27 @@ export default function Home() {
                 ? "ACCESS MANAGEMENT"
                 : activeView === "tools"
                   ? "TOOL-ENABLED ASSISTANT"
-                  : "YOUR AI WORKSPACE"}
+                  : activeView === "agent"
+                    ? "LANGCHAIN AGENT"
+                    : "YOUR AI WORKSPACE"}
             </p>
             <h1>
               {activeView === "dashboard" && user.role === "admin"
                 ? "Admin dashboard"
                 : activeView === "tools"
                   ? "Tools chat"
-                  : "Agent workspace"}
+                  : activeView === "agent"
+                    ? "LangChain agent"
+                    : "Agent workspace"}
             </h1>
             <p className="muted">
               {activeView === "dashboard" && user.role === "admin"
                 ? `Manage users and access for ${user.email}.`
                 : activeView === "tools"
                   ? "Ask the assistant to calculate with its built-in math tools."
-                  : `Welcome back, ${user.full_name || user.email}.`}
+                  : activeView === "agent"
+                    ? "Let the agent decide when to use its arithmetic tools."
+                    : `Welcome back, ${user.full_name || user.email}.`}
             </p>
           </div>
           <span className={`role-pill ${user.role === "admin" ? "role-admin" : ""}`}>
@@ -786,6 +906,130 @@ export default function Home() {
               </div>
             </section>
           </>
+        ) : activeView === "agent" ? (
+          <section className="agent-workspace" aria-label="LangChain agent chat">
+            <header className="chat-header">
+              <div className="chat-agent">
+                <span className="agent-orb" aria-hidden="true">
+                  <Sparkles size={22} />
+                </span>
+                <div>
+                  <p className="eyebrow">LANGCHAIN AGENT</p>
+                  <h2>Agent assistant</h2>
+                  <span>The agent chooses and runs tools when useful.</span>
+                </div>
+              </div>
+              <button
+                className="button button-secondary new-chat-button"
+                type="button"
+                onClick={() => {
+                  setAgentMessages([]);
+                  setAgentError("");
+                  setAgentInput("");
+                }}
+                disabled={agentSubmitting}
+              >
+                <Plus aria-hidden="true" size={16} />
+                New chat
+              </button>
+            </header>
+
+            <div
+              className="chat-messages"
+              ref={agentMessagesRef}
+              aria-label="LangChain agent conversation"
+              aria-live="polite"
+            >
+              {agentMessages.length === 0 ? (
+                <div className="chat-empty-state">
+                  <span className="chat-empty-icon" aria-hidden="true">
+                    <Sparkles size={22} />
+                  </span>
+                  <strong>Ask the agent to solve a problem</strong>
+                  <p>
+                    LangChain manages the model and tool-calling loop for you.
+                  </p>
+                  <div className="chat-suggestions" aria-label="Suggested prompts">
+                    {[
+                      "What is 125 plus 348?",
+                      "Multiply 24 by 19",
+                      "Explain how you calculate 144 divided by 12",
+                    ].map((suggestion) => (
+                      <button
+                        className="chat-suggestion"
+                        key={suggestion}
+                        type="button"
+                        onClick={() => setAgentInput(suggestion)}
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                agentMessages.map((message) => (
+                  <article
+                    className={`chat-message chat-message-${message.role}`}
+                    key={message.id}
+                  >
+                    <span className="chat-message-avatar" aria-hidden="true">
+                      {message.role === "assistant" ? (
+                        <Sparkles size={16} />
+                      ) : (
+                        (user.full_name || user.email).slice(0, 1).toUpperCase()
+                      )}
+                    </span>
+                    <div className="chat-message-content">
+                      <span>{message.role === "assistant" ? "Agent" : "You"}</span>
+                      <MarkdownContent content={message.content} />
+                    </div>
+                  </article>
+                ))
+              )}
+              {agentSubmitting && (
+                <div className="chat-message chat-message-assistant" role="status">
+                  <span className="chat-message-avatar" aria-hidden="true">
+                    <Sparkles size={16} />
+                  </span>
+                  <div className="chat-message-content">
+                    <span>Agent</span>
+                    <p className="chat-thinking">Thinking and choosing tools…</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {agentError && (
+              <p className="alert alert-error chat-error" role="alert">
+                {agentError}
+              </p>
+            )}
+
+            <form className="agent-composer" onSubmit={handleAgentChatSubmit}>
+              <label htmlFor="agent-chat-prompt">Your message</label>
+              <textarea
+                id="agent-chat-prompt"
+                value={agentInput}
+                onChange={(event) => setAgentInput(event.target.value)}
+                onKeyDown={handleComposerKeyDown}
+                placeholder="Ask the agent to calculate or explain something…"
+                maxLength={4000}
+                disabled={agentSubmitting}
+                rows={3}
+              />
+              <div className="composer-footer">
+                <span>LangChain agent + arithmetic tools · ⌘/Ctrl + Enter to send</span>
+                <button
+                  className="button button-primary"
+                  type="submit"
+                  disabled={agentSubmitting || !agentInput.trim()}
+                >
+                  <Send aria-hidden="true" size={15} />
+                  {agentSubmitting ? "Working…" : "Send"}
+                </button>
+              </div>
+            </form>
+          </section>
         ) : activeView === "tools" ? (
           <section className="agent-workspace" aria-label="Tool-enabled chat">
             <header className="chat-header">

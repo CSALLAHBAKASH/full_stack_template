@@ -415,7 +415,7 @@ select:focus {
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 20px;
 }
@@ -446,7 +446,7 @@ select:focus {
 }
 
 .stat-hint {
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .panel {
